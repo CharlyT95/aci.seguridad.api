@@ -1,0 +1,6 @@
+@Aduanas.Aci.Seguridad.Api_HostAddress = http://localhost:5296
+
+GET {{Aduanas.Aci.Seguridad.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
