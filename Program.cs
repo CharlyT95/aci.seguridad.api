@@ -18,29 +18,29 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddSingleton<JwtHelper>();
 
 // ── Servicios ─────────────────────────────────────────────────────────────────
-builder.Services.AddScoped<IAuthService,       AuthService>();
-builder.Services.AddScoped<ITokenService,      TokenService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IPermissionService, PermisoService>();
 builder.Services.AddScoped<IParametroService, ParametroService>();
 
 // ── JWT Authentication ────────────────────────────────────────────────────────
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-var secretKey   = jwtSettings["SecretKey"]!;
+var secretKey = jwtSettings["SecretKey"]!;
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer           = true,
-            ValidateAudience         = true,
-            ValidateLifetime         = true,
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer              = jwtSettings["Issuer"],
-            ValidAudience            = jwtSettings["Audience"],
-            IssuerSigningKey         = new SymmetricSecurityKey(
+            ValidIssuer = jwtSettings["Issuer"],
+            ValidAudience = jwtSettings["Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(
                                            Encoding.UTF8.GetBytes(secretKey)),
-            ClockSkew                = TimeSpan.Zero
+            ClockSkew = TimeSpan.Zero
         };
     });
 
@@ -50,7 +50,6 @@ builder.Services.AddAuthorization();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // camelCase en la respuesta JSON
         options.JsonSerializerOptions.PropertyNamingPolicy =
             System.Text.Json.JsonNamingPolicy.CamelCase;
     });
@@ -62,18 +61,18 @@ builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title   = "Aduanas ACI - Seguridad API",
+        Title = "Aduanas ACI - Seguridad API",
         Version = "v1"
     });
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Name         = "Authorization",
-        Type         = SecuritySchemeType.Http,
-        Scheme       = "bearer",
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
         BearerFormat = "JWT",
-        In           = ParameterLocation.Header,
-        Description  = "Ingrese el token JWT. Ejemplo: Bearer {token}"
+        In = ParameterLocation.Header,
+        Description = "Ingrese el token JWT. Ejemplo: Bearer {token}"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -92,17 +91,32 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// ── CORS (ajustar según tus orígenes permitidos) ──────────────────────────────
+// ── CORS ──────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
-        policy.AllowAnyOrigin()
+    options.AddPolicy("PermitirAngular", policy =>
+    {
+        policy.WithOrigins("http://localhost:4200")
               .AllowAnyMethod()
-              .AllowAnyHeader());
+              .AllowAnyHeader();
+    });
 });
 
 var app = builder.Build();
-
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        var error = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+        context.Response.StatusCode = 500;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = error?.Error.Message,
+            detalle = error?.Error.StackTrace
+        });
+    });
+});
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
 {
@@ -110,11 +124,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseCors("PermitirAngular");  // ← CORS primero, nombre consistente con el registro
 app.UseHttpsRedirection();
-app.UseCors("AllowAll");
 
-app.UseAuthentication();                        // ← Siempre antes de Authorization
-app.UseMiddleware<PermissionMiddleware>();       // ← Después de Authentication
+app.UseAuthentication();                   // ← Siempre antes de Authorization
+app.UseMiddleware<PermissionMiddleware>(); // ← Después de Authentication
 app.UseAuthorization();
 
 app.MapControllers();
