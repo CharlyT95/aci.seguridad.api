@@ -1,4 +1,5 @@
 using Aduanas.Aci.Seguridad.Api.DTOs.Auth;
+using Aduanas.Aci.Seguridad.Api.Helpers;
 using Aduanas.Aci.Seguridad.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -55,8 +56,18 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<IActionResult> Logout([FromBody] string refreshToken)
     {
-        await _authService.LogoutAsync(refreshToken);
-        return Ok(new { mensaje = "Sesión cerrada correctamente" });
+        if (string.IsNullOrWhiteSpace(refreshToken))
+            return BadRequest(new { mensaje = "El refresh token es requerido." });
+
+        var resultado = await _authService.LogoutAsync(refreshToken);
+
+        return resultado switch
+        {
+            SesionEnum.Revocado => Ok(new { mensaje = "Sesión cerrada correctamente." }),
+            SesionEnum.YaRevocado => Conflict(new { mensaje = "Sesión expirada." }),
+            SesionEnum.NoEncontrado => NotFound(new { mensaje = "Token no encontrado." }),
+            _ => StatusCode(500, new { mensaje = "Error inesperado." })
+        };
     }
 
     /// <summary>Obtener información del usuario autenticado desde el token</summary>

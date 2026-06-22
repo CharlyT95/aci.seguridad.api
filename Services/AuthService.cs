@@ -14,7 +14,7 @@ public interface IAuthService
 {
     Task<LoginResponseDTO?> LoginAsync(LoginRequestDTO request, string? ip);
     Task<LoginResponseDTO?> RefreshTokenAsync(RefreshTokenRequestDTO request);
-    Task LogoutAsync(string refreshToken);
+    Task<SesionEnum> LogoutAsync(string refreshToken);
 }
 
 public class AuthService : IAuthService
@@ -208,9 +208,9 @@ public class AuthService : IAuthService
     }
 
 
-    public async Task LogoutAsync(string refreshToken)
+    public async Task<SesionEnum> LogoutAsync(string refreshToken)
     {
-        await _tokenService.RevokeRefreshTokenAsync(refreshToken);
+        return await _tokenService.RevokeRefreshTokenAsync(refreshToken);
     }
 
 
