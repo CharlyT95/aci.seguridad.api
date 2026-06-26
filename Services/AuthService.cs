@@ -15,6 +15,7 @@ public interface IAuthService
     Task<LoginResponseDTO?> LoginAsync(LoginRequestDTO request, string? ip);
     Task<LoginResponseDTO?> RefreshTokenAsync(RefreshTokenRequestDTO request);
     Task<SesionEnum> LogoutAsync(string refreshToken);
+    Task<bool> IsAccessTokenActivoAsync(string accessToken);
 }
 
 public class AuthService : IAuthService
@@ -39,21 +40,18 @@ public class AuthService : IAuthService
 
     public async Task<LoginResponseDTO?> LoginAsync(LoginRequestDTO request, string? ip)
     {
-        //Usuario activo
         var usuario = await _db.Usuario
             .FirstOrDefaultAsync(u => u.UsuarioLogin == request.NombreUsuario && u.Activo);
 
         if (usuario is null)
             return null;
 
-        //Credenciales
         var credencial = await _db.UsuarioCredencial
             .FirstOrDefaultAsync(c => c.IdUsuario == usuario.IdUsuario);
 
         if (credencial is null || credencial.BloqueoTemporal)
             return null;
 
-        //Validar password
         var passwordValida = PasswordHelper.VerificarPassword(
             password: request.Contrasenia,
             storedHash: credencial.PasswordHash,
@@ -63,7 +61,6 @@ public class AuthService : IAuthService
         if (!passwordValida)
         {
             credencial.IntentosFallidos++;
-
             if (credencial.IntentosFallidos >= 5)
                 credencial.BloqueoTemporal = true;
 
@@ -71,20 +68,15 @@ public class AuthService : IAuthService
             return null;
         }
 
-        //Reset intentos
         if (credencial.IntentosFallidos > 0)
         {
             credencial.IntentosFallidos = 0;
             await _db.SaveChangesAsync();
         }
 
-        //Roles + Permisos
         var roles = await GetRolesConPermisosAsync(usuario.IdUsuario);
-
-        //Parámetros de expiración
         var (accessMinutos, refreshDias) = await GetExpiracionParametrosAsync();
 
-        //JWT
         var (accessToken, accessExp) = _jwt.GenerateAccessToken(
             idUsuario: usuario.IdUsuario,
             usuarioLogin: usuario.UsuarioLogin,
@@ -97,7 +89,6 @@ public class AuthService : IAuthService
 
         var (refreshToken, refreshExp) = _jwt.GenerateRefreshToken(refreshDias);
 
-        // Guardar refresh token
         await _tokenService.SaveRefreshTokenAsync(
             idUsuario: usuario.IdUsuario,
             refreshToken: refreshToken,
@@ -106,7 +97,6 @@ public class AuthService : IAuthService
             ip: ip
         );
 
-        //Response
         return new LoginResponseDTO
         {
             Token = accessToken,
@@ -138,16 +128,16 @@ public class AuthService : IAuthService
         var storedToken = await _tokenService.GetValidRefreshTokenAsync(request.TokenActualizacion);
         if (storedToken is null)
             return null;
-        // 3.Vaildar usurio
+
+        // 3. Validar que el usuario del token coincide con el de BD
         var userIdFromToken =
             principal.FindFirst(ClaimTypes.NameIdentifier)?.Value
             ?? principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
 
-        if (userIdFromToken is null ||
-            userIdFromToken != storedToken.IdUsuario.ToString())
+        if (userIdFromToken is null || userIdFromToken != storedToken.IdUsuario.ToString())
             return null;
 
-        // 4. Revocar refresh token actual (rotación)
+        // 4. Revocar sesión actual (rotación — busca por access token en TokenHash)
         await _tokenService.RevokeRefreshTokenAsync(request.TokenActualizacion);
 
         // 5. Obtener usuario activo
@@ -158,13 +148,11 @@ public class AuthService : IAuthService
         if (usuario is null)
             return null;
 
-        // 6. Obtener roles + permisos (ACTIVOS)
+        // 6. Obtener roles + permisos actualizados
         var roles = await GetRolesConPermisosAsync(usuario.IdUsuario);
-
-        // Parámetros de expiración
         var (accessMinutos, refreshDias) = await GetExpiracionParametrosAsync();
 
-        // 7. Generar nuevo access token
+        // 7. Generar nuevos tokens
         var (accessToken, accessExp) = _jwt.GenerateAccessToken(
             idUsuario: usuario.IdUsuario,
             usuarioLogin: usuario.UsuarioLogin,
@@ -175,10 +163,9 @@ public class AuthService : IAuthService
             minutos: accessMinutos
         );
 
-        // 8. Generar nuevo refresh token
         var (refreshToken, refreshExp) = _jwt.GenerateRefreshToken(refreshDias);
 
-        // 9. Guardar nuevo refresh token
+        // 8. Guardar nueva sesión
         await _tokenService.SaveRefreshTokenAsync(
             idUsuario: usuario.IdUsuario,
             refreshToken: refreshToken,
@@ -187,7 +174,6 @@ public class AuthService : IAuthService
             ip: null
         );
 
-        // 10. Response (igual que login)
         return new LoginResponseDTO
         {
             Token = accessToken,
@@ -214,6 +200,13 @@ public class AuthService : IAuthService
     }
 
 
+    // Delega directamente al TokenService que tiene acceso al DbContext
+    public async Task<bool> IsAccessTokenActivoAsync(string accessToken)
+    {
+        return await _tokenService.IsAccessTokenActivoAsync(accessToken);
+    }
+
+
     private async Task<(int accessMinutos, int refreshDias)> GetExpiracionParametrosAsync()
     {
         var accessMinutosStr = await _parametroService.ObtenerValorAsync("MinutosValidosToken");
@@ -230,9 +223,7 @@ public class AuthService : IAuthService
     {
         return await _db.UsuarioRol
             .AsNoTracking()
-            .Where(ur => ur.IdUsuario == idUsuario
-                      && ur.Activo
-                      && ur.Rol.Activo)
+            .Where(ur => ur.IdUsuario == idUsuario && ur.Activo && ur.Rol.Activo)
             .Select(ur => new RolDTO
             {
                 IdRol = ur.Rol.IdRol,

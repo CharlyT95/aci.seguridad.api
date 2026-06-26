@@ -10,7 +10,8 @@ public interface ITokenService
     Task<RefreshToken> SaveRefreshTokenAsync(
         int idUsuario, string refreshToken, string accessToken, DateTime expiration, string? ip);
     Task<RefreshToken?> GetValidRefreshTokenAsync(string token);
-    Task<SesionEnum> RevokeRefreshTokenAsync(string token);
+    Task<SesionEnum> RevokeRefreshTokenAsync(string refreshToken);
+    Task<bool> IsAccessTokenActivoAsync(string accessToken);
 }
 
 public class TokenService : ITokenService
@@ -25,13 +26,14 @@ public class TokenService : ITokenService
         var entity = new RefreshToken
         {
             IdUsuario = idUsuario,
-            TokenHash = accessToken,
-            TokenHashReemplazo = refreshToken,   
+            TokenHash = accessToken,       // access token (texto plano)
+            TokenHashReemplazo = refreshToken,      // refresh token (texto plano)
             Expira = expiration,
             FechaCreado = DateTime.Now,
             Revocado = false,
             FechaRevocado = null
         };
+
         _db.RefreshToken.Add(entity);
         await _db.SaveChangesAsync();
         return entity;
@@ -47,23 +49,13 @@ public class TokenService : ITokenService
                 r.Expira > DateTime.Now);
     }
 
-
-    //public async Task RevokeRefreshTokenAsync(string token)
-    //{
-    //    var rt = await _db.RefreshToken
-    //        .FirstOrDefaultAsync(r => r.TokenHash == token && !r.Revocado);
-    //    if (rt is not null)
-    //    {
-    //        rt.Revocado = true;
-    //        rt.FechaRevocado = DateTime.UtcNow;
-    //        await _db.SaveChangesAsync();
-    //    }
-    //}
-
-    public async Task<SesionEnum> RevokeRefreshTokenAsync(string token)
+    /// <summary>
+    /// Revoca la sesión buscando por RefreshToken (TokenHashReemplazo).
+    /// </summary>
+    public async Task<SesionEnum> RevokeRefreshTokenAsync(string refreshToken)
     {
         var rt = await _db.RefreshToken
-            .FirstOrDefaultAsync(r => r.TokenHash == token);
+            .FirstOrDefaultAsync(r => r.TokenHashReemplazo == refreshToken);
 
         if (rt is null)
             return SesionEnum.NoEncontrado;
@@ -76,5 +68,21 @@ public class TokenService : ITokenService
         await _db.SaveChangesAsync();
 
         return SesionEnum.Revocado;
+    }
+
+    /// <summary>
+    /// Verifica si el access token tiene una sesión activa (no revocada) en BD.
+    /// Compara contra TokenHash, que se guarda en texto plano al hacer login.
+    /// </summary>
+    public async Task<bool> IsAccessTokenActivoAsync(string accessToken)
+    {
+        var sesion = await _db.RefreshToken
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.TokenHash == accessToken);
+
+        if (sesion is null)
+            return false;
+
+        return !sesion.Revocado;
     }
 }

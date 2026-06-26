@@ -3,6 +3,7 @@ using Aduanas.Aci.Seguridad.Api.Helpers;
 using Aduanas.Aci.Seguridad.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace Aduanas.Aci.Seguridad.Api.Controllers;
 
@@ -26,62 +27,96 @@ public class AuthController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var ip     = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
         var result = await _authService.LoginAsync(request, ip);
 
         if (result is null)
-            return Unauthorized(new { mensaje = "Credenciales inválidas o cuenta bloqueada" });
+            return Unauthorized(ResponseHelper.Fail<string>("Credenciales incorrectas, intente nuevamente"));
 
-        return Ok(result);
+        return Ok(ResponseHelper.Success(result));
     }
 
-    /// <summary>Renovar AccessToken usando un RefreshToken válido</summary>
-    [HttpPost("refresh-token")]
+    /// <summary>
+    /// Renovar AccessToken usando un RefreshToken válido.
+    /// Headers requeridos:
+    ///   Authorization: Bearer {accessToken}
+    ///   X-Refresh-Token: {refreshToken}
+    /// </summary>
+    [HttpGet("refresh-token")]
     [AllowAnonymous]
-    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequestDTO request)
+    public async Task<IActionResult> RefreshToken()
     {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
+        var accessToken = Request.Headers["Authorization"]
+            .FirstOrDefault()?.Replace("Bearer ", "").Trim();
+
+        var refreshToken = Request.Headers["X-Refresh-Token"]
+            .FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(accessToken) || string.IsNullOrWhiteSpace(refreshToken))
+            return BadRequest(ResponseHelper.Fail<string>("Se requieren los headers Authorization y X-Refresh-Token."));
+
+        var request = new RefreshTokenRequestDTO
+        {
+            Token = accessToken,
+            TokenActualizacion = refreshToken
+        };
 
         var result = await _authService.RefreshTokenAsync(request);
 
         if (result is null)
-            return Unauthorized(new { mensaje = "Token inválido o expirado" });
+            return Unauthorized(ResponseHelper.Fail<string>("Token inválido o expirado"));
 
-        return Ok(result);
+        return Ok(ResponseHelper.Success(result));
     }
 
-    /// <summary>Cerrar sesión revocando el RefreshToken</summary>
-    [HttpPost("logout")]
+    /// <summary>
+    /// Cerrar sesión revocando el RefreshToken.
+    /// Headers requeridos:
+    ///   X-Refresh-Token: {refreshToken}
+    /// </summary>
+    [HttpGet("logout")]
     [Authorize]
-    public async Task<IActionResult> Logout([FromBody] string refreshToken)
+    public async Task<IActionResult> Logout()
     {
+        var refreshToken = Request.Headers["X-Refresh-Token"].FirstOrDefault();
+
         if (string.IsNullOrWhiteSpace(refreshToken))
-            return BadRequest(new { mensaje = "El refresh token es requerido." });
+            return BadRequest(ResponseHelper.Fail<string>("El refresh token es requerido."));
 
         var resultado = await _authService.LogoutAsync(refreshToken);
 
         return resultado switch
         {
-            SesionEnum.Revocado => Ok(new { mensaje = "Sesión cerrada correctamente." }),
-            SesionEnum.YaRevocado => Conflict(new { mensaje = "Sesión expirada." }),
-            SesionEnum.NoEncontrado => NotFound(new { mensaje = "Token no encontrado." }),
-            _ => StatusCode(500, new { mensaje = "Error inesperado." })
+            SesionEnum.Revocado => Ok(ResponseHelper.Success<object>(null, "Sesión cerrada correctamente.")),
+            SesionEnum.YaRevocado => Ok(ResponseHelper.Success<object>(null, "Sesión ya fue cerrada anteriormente.")),
+            SesionEnum.NoEncontrado => NotFound(ResponseHelper.Fail<string>("Token no encontrado.")),
+            _ => StatusCode(500, ResponseHelper.Fail<string>("Error inesperado."))
         };
     }
 
     /// <summary>Obtener información del usuario autenticado desde el token</summary>
     [HttpGet("me")]
     [Authorize]
-    public IActionResult GetMe()
+    public async Task<IActionResult> GetMe()
     {
-        var idUsuario    = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        var usuarioLogin = User.Identity?.Name;
-        var roles        = User.FindAll(System.Security.Claims.ClaimTypes.Role)
-                               .Select(c => c.Value).ToList();
-        var permisos     = User.FindAll("permiso")
-                               .Select(c => c.Value).ToList();
+        var accessToken = Request.Headers["Authorization"]
+            .FirstOrDefault()?.Replace("Bearer ", "").Trim();
 
-        return Ok(new { idUsuario, usuarioLogin, roles, permisos });
+        if (string.IsNullOrWhiteSpace(accessToken))
+            return Unauthorized(ResponseHelper.Fail<string>("Token no proporcionado."));
+
+        var valido = await _authService.IsAccessTokenActivoAsync(accessToken);
+        if (!valido)
+            return Unauthorized(ResponseHelper.Fail<string>("La sesión ha sido revocada."));
+
+        var me = new MeDTO
+        {
+            idUsuario = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,
+            usuarioLogin = User.Identity?.Name,
+            roles = User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList(),
+            permisos = User.FindAll("permiso").Select(c => c.Value).ToList()
+        };
+
+        return Ok(ResponseHelper.Success(me));
     }
 }
