@@ -10,20 +10,19 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Base de Datos ─────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+
 builder.Services.AddSingleton<JwtHelper>();
 
-// ── Servicios ─────────────────────────────────────────────────────────────────
+
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IPermissionService, PermisoService>();
 builder.Services.AddScoped<IParametroService, ParametroService>();
 
-// ── JWT Authentication ────────────────────────────────────────────────────────
+
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
 var secretKey = jwtSettings["SecretKey"]!;
 
@@ -46,7 +45,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
-// ── Controllers + JSON ────────────────────────────────────────────────────────
+// Controllers
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -56,7 +55,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddEndpointsApiExplorer();
 
-// ── Swagger con soporte Bearer ────────────────────────────────────────────────
+// ── Swagger con Bearer 
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
@@ -91,7 +90,7 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// ── CORS ──────────────────────────────────────────────────────────────────────
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("PermitirAngular", policy =>
@@ -117,18 +116,18 @@ app.UseExceptionHandler(errorApp =>
         });
     });
 });
-// ── Pipeline ──────────────────────────────────────────────────────────────────
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseCors("PermitirAngular");  // ← CORS primero, nombre consistente con el registro
+app.UseCors("PermitirAngular");  
 app.UseHttpsRedirection();
 
-app.UseAuthentication();                   // ← Siempre antes de Authorization
-app.UseMiddleware<PermissionMiddleware>(); // ← Después de Authentication
+app.UseAuthentication();                   
+app.UseMiddleware<PermissionMiddleware>(); 
 app.UseAuthorization();
 
 app.MapControllers();
